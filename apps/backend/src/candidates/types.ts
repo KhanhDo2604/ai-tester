@@ -5,36 +5,19 @@ export type ContractName =
   | "FormatValidation"
   | "ActionFeedback"
   | "StateConsistency"
-  | "NoServerError";
+  | "NoServerError"
+  // Contracts for standalone actions (Phase 3):
+  | "ActionEffect"
+  | "ConfirmBeforeDestructive"
+  | "DeletionEffective";
 
-/**
- * How a candidate is exercised:
- * - emptySubmit: clear every field, then submit — checks Form Validation Feedback.
- * - validSubmit: fill every field with a plausible value, then submit —
- *   checks Action Feedback and State Consistency.
- * - invalidFormat: fill every field validly except fields with a known
- *   format (email, URL), which get a malformed value — checks Format
- *   Validation. Only generated when such a field is present and editable.
- *
- * Every strategy also checks NoServerError.
- */
+//How a candidate is exercised. Every strategy also checks NoServerError.
 export type Strategy = "emptySubmit" | "validSubmit" | "invalidFormat";
 
-/**
- * How the interaction is committed:
- * - click: click the group's submit control.
- * - enter: press Enter in the last text field — for inputs that have no
- *   submit control at all (a todo entry box, a search box).
- */
+//interaction
 export type SubmitMode = "click" | "enter";
 
-/**
- * How the fields were grouped into one interaction:
- * - form: they sit inside a real <form> element.
- * - adjacent: no <form>, but the fields are immediately followed by a
- *   button in the same container (common in apps that never use <form>).
- * - single: one text field with no button next to it, committed with Enter.
- */
+//How the fields were grouped into one interaction
 export type Grouping = "form" | "adjacent" | "single";
 
 /** Enough information to find an element again with page.getByRole(role, { name }). */
@@ -92,5 +75,7 @@ export interface DeferredControl {
    * and therefore repeats on every page (e.g. "Log out"); "page" otherwise.
    */
   region: "persistent" | "page";
+  /** Headings of the page the control was found on — context for Semantic Contract Discovery. */
+  pageHeadings: string[];
   reason: string;
 }

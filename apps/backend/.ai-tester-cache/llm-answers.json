@@ -1,0 +1,22 @@
+{
+  "5a79f708505889f68009000ae6b0d3bf22649ce28f941fe3df2a99f59abda220": {
+    "category": "state-change",
+    "expectation": "Marking the task as complete will update its status in the system.",
+    "requiresConfirmation": false
+  },
+  "b1d08bea3aead96211a3f9b0b5e3cb2f300a8eafc105f62c9e215a6787ca223c": {
+    "category": "destructive",
+    "expectation": "The task will be permanently deleted from the system.",
+    "requiresConfirmation": true
+  },
+  "6fce9f879cf07ec712c11df3f4fac048dc8c2395594599b1b8807e118fd7755c": {
+    "category": "state-change",
+    "expectation": "The task will be marked as complete, possibly changing its status or visibility on the task list.",
+    "requiresConfirmation": false
+  },
+  "ef38209ec9052e7fa30238e83225b2fa8d213cabd3fbf9a2480f2c70882a55f6": {
+    "category": "destructive",
+    "expectation": "The task will be permanently deleted from the system.",
+    "requiresConfirmation": true
+  }
+}

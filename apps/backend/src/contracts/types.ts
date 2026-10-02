@@ -17,6 +17,14 @@ export interface ContractResult {
   verdict: Verdict;
   /** Concrete, human-readable facts from the before/after delta that support the verdict. */
   evidence: string[];
+  /**
+   * "predefined" contracts have a hand-written comparison function.
+   * "discovered" ones come from an LLM hypothesis (README Section 5), so a
+   * violation of one is a weaker claim — the Evidence Ladder (Phase 4)
+   * ranks it lower, and the report presents it as a potential issue or
+   * improvement rather than a confirmed bug. Absent means "predefined".
+   */
+  source?: "predefined" | "discovered";
 }
 
 export type ContractCheck = (

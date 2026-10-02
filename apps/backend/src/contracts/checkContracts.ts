@@ -7,7 +7,8 @@ import { checkNoServerError } from "./noServerError";
 import { checkStateConsistency } from "./stateConsistency";
 import { ContractCheck, ContractResult } from "./types";
 
-const CHECKS: Record<ContractName, ContractCheck> = {
+/** Contracts for form candidates. Standalone actions use contracts/actionContracts.ts instead. */
+const CHECKS: Partial<Record<ContractName, ContractCheck>> = {
   FormValidationFeedback: checkFormValidationFeedback,
   FormatValidation: checkFormatValidation,
   ActionFeedback: checkActionFeedback,
@@ -18,10 +19,17 @@ const CHECKS: Record<ContractName, ContractCheck> = {
 /** Contract Check — README Section 7. Runs every contract the candidate carries. */
 export function checkContracts(observation: Observation): ContractResult[] {
   const { candidate } = observation;
-  return candidate.contracts.map((contract) => ({
-    contract,
-    candidateId: candidate.id,
-    route: candidate.route,
-    ...CHECKS[contract](observation),
-  }));
+  return candidate.contracts.map((contract) => {
+    const check = CHECKS[contract];
+    if (!check)
+      throw new Error(
+        `No form-candidate check registered for contract "${contract}"`,
+      );
+    return {
+      contract,
+      candidateId: candidate.id,
+      route: candidate.route,
+      ...check(observation),
+    };
+  });
 }

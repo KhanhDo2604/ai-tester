@@ -223,6 +223,12 @@ export function detectCandidates(
     }));
   });
 
+  const pageHeadings: string[] = [];
+  walk(graph.root, (node) => {
+    const heading = cleanText(node.label);
+    if (node.type === "heading" && heading) pageHeadings.push(heading);
+  });
+
   const deferred: DeferredControl[] = [];
   walk(graph.root, (node, ancestors) => {
     if (node.type !== "button" || !node.label || coveredButtons.has(node.id))
@@ -235,6 +241,7 @@ export function detectCandidates(
       region: ancestors.some((a) => PERSISTENT_REGION_ROLES.has(a.role))
         ? "persistent"
         : "page",
+      pageHeadings,
       reason:
         "Standalone action — needs Semantic Contract Discovery (Phase 3) to decide what it should do and whether it is safe to execute.",
     });

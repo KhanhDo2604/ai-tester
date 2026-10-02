@@ -1,4 +1,4 @@
-import { Browser, BrowserContext, Page } from "playwright";
+import { Browser, BrowserContext, Page, Request } from "playwright";
 import { Candidate, FieldTarget } from "../candidates/types";
 import { ScanConfig } from "../config/scanConfig";
 import { captureSignature, StateSignature } from "../state/signature";
@@ -33,6 +33,13 @@ export interface RequestRecord {
   url: string;
   status?: number;
   failure?: string;
+  /**
+   * Milliseconds from sending the request to receiving the response
+   * headers (or the failure). That span is the server's processing time
+   * plus network latency, which on a local app is essentially the server's
+   * own time — the number a slow endpoint shows up in.
+   */
+  durationMs?: number;
 }
 
 /** Everything observed while executing one candidate — the input to Contract Check. */
@@ -119,28 +126,7 @@ export async function executeCandidate(
   // Requests are recorded only while the interaction runs (fill → submit →
   // settle), not during the initial page load or the later reload, so every
   // recorded request can be attributed to this candidate's action.
-  let recording = false;
-  page.on("response", (response) => {
-    const request = response.request();
-    if (!recording || !DATA_REQUEST_TYPES.has(request.resourceType())) return;
-    observation.requests.push({
-      method: request.method(),
-      url: pathOf(request.url()),
-      status: response.status(),
-    });
-  });
-  page.on("requestfailed", (request) => {
-    if (!recording || !DATA_REQUEST_TYPES.has(request.resourceType())) return;
-    const failure = request.failure()?.errorText ?? "unknown error";
-    // ERR_ABORTED means the browser cancelled the request itself, almost
-    // always because the page navigated away — not a server problem.
-    if (failure.includes("ERR_ABORTED")) return;
-    observation.requests.push({
-      method: request.method(),
-      url: pathOf(request.url()),
-      failure,
-    });
-  });
+  const recorder = recordDataRequests(page);
 
   try {
     await navigate(page, candidate.route);
@@ -151,11 +137,11 @@ export async function executeCandidate(
       );
     }
 
-    recording = true;
+    recorder.start();
     await fillForm(page, candidate, config);
     Object.assign(observation, await submitCandidate(page, candidate));
     observation.after = await captureSignature(page, network);
-    recording = false;
+    observation.requests = recorder.stop();
 
     // State Consistency needs to know what the same page looks like when
     // loaded fresh, so the post-action UI can be compared against it.
@@ -167,11 +153,75 @@ export async function executeCandidate(
     observation.error =
       err instanceof Error ? err.message.split("\n")[0] : String(err);
   } finally {
-    recording = false;
+    if (observation.requests.length === 0)
+      observation.requests = recorder.stop();
     await context.close();
   }
 
   return observation;
+}
+
+export interface RequestRecorder {
+  start(): void;
+  /** Stops recording and returns everything recorded since start(). */
+  stop(): RequestRecord[];
+}
+
+/**
+ * Records data requests (fetch/XHR) between start() and stop(), so each
+ * recorded request can be attributed to one specific interaction.
+ */
+export function recordDataRequests(page: Page): RequestRecorder {
+  let recording = false;
+  let records: RequestRecord[] = [];
+  const startedAt = new Map<Request, number>();
+
+  page.on("request", (request) => {
+    if (recording && DATA_REQUEST_TYPES.has(request.resourceType()))
+      startedAt.set(request, Date.now());
+  });
+  const elapsed = (request: Request): number | undefined => {
+    const start = startedAt.get(request);
+    startedAt.delete(request);
+    return start === undefined ? undefined : Date.now() - start;
+  };
+
+  page.on("response", (response) => {
+    const request = response.request();
+    if (!recording || !DATA_REQUEST_TYPES.has(request.resourceType())) return;
+    records.push({
+      method: request.method(),
+      url: pathOf(request.url()),
+      status: response.status(),
+      durationMs: elapsed(request),
+    });
+  });
+  page.on("requestfailed", (request) => {
+    if (!recording || !DATA_REQUEST_TYPES.has(request.resourceType())) return;
+    const failure = request.failure()?.errorText ?? "unknown error";
+    const durationMs = elapsed(request);
+    // ERR_ABORTED means the browser cancelled the request itself, almost
+    // always because the page navigated away — not a server problem.
+    if (failure.includes("ERR_ABORTED")) return;
+    records.push({
+      method: request.method(),
+      url: pathOf(request.url()),
+      failure,
+      durationMs,
+    });
+  });
+
+  return {
+    start() {
+      records = [];
+      startedAt.clear();
+      recording = true;
+    },
+    stop() {
+      recording = false;
+      return records;
+    },
+  };
 }
 
 function valueFor(
@@ -259,8 +309,8 @@ export async function fillForm(
   page: Page,
   candidate: Candidate,
   config: ScanConfig,
-): Promise<void> {
-  const runId = newRunId();
+  runId: string = newRunId(),
+): Promise<string> {
   const fillWithValues = candidate.strategy !== "emptySubmit";
 
   for (const field of candidate.fields) {
@@ -282,4 +332,8 @@ export async function fillForm(
 
     await locator.fill(valueFor(field, candidate, config, runId));
   }
+
+  // The run id is embedded in every generated text value, so whatever this
+  // submission creates can be found again by searching for it.
+  return runId;
 }
