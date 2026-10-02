@@ -8,11 +8,15 @@
  */
 
 export interface UISemanticGraphNode {
+  /** The CDP accessibility node id — unique within one capture. */
   id: string;
 
   /**
    * Normalized structural type. Kept to a small, fixed vocabulary so
    * Interaction Candidate Detection can pattern-match on it reliably.
+   * "text" is visible text content that isn't already part of a
+   * control's accessible name (e.g. "No tasks yet.", an inline error
+   * message) — the State Signature needs it to see feedback messages.
    */
   type:
     | "form"
@@ -22,6 +26,7 @@ export interface UISemanticGraphNode {
     | "heading"
     | "dialog"
     | "alert"
+    | "text"
     | "container";
 
   /** The ARIA role as read from the accessibility tree. */
@@ -41,6 +46,7 @@ export interface UISemanticGraphNode {
 
   /** Extra attributes the accessibility tree doesn't expose, read from the DOM subset. */
   domExtra?: {
+    tag?: string;
     href?: string;
     inputType?: string;
     hidden?: boolean;

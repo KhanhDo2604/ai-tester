@@ -28,6 +28,8 @@ async function main() {
   await page.getByLabel("Password").fill("password123");
   await page.getByRole("button", { name: "Log in" }).click();
 
+  await page.waitForURL("**/tasks");
+
   // Page 2: the create-task page — structurally different (has a form).
   await page.goto(`${BASE_URL}/tasks/new`);
   const createTaskGraph = await buildUISemanticGraph(page);
