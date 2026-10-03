@@ -29,8 +29,11 @@ export interface Finding {
   levelReason: string;
   route: string;
   contracts: ContractName[];
-  source: "predefined" | "discovered" | "judged";
+  source: "predefined" | "discovered" | "judged" | "heuristic";
+  /** Rule id for heuristic findings, e.g. "image-alt". */
+  heuristic?: string;
   evidence: string[];
+  /** Contract results behind the finding; empty for heuristic findings. */
   results: CheckedResult[];
   reproduced?: boolean;
   aiConfidence?: number;

@@ -41,6 +41,8 @@ export async function cleanUpOwnRecords(
   config: ScanConfig,
   observations: ActionObservation[],
   storageState?: StorageState,
+  /** Own records created outside actions (e.g. by the list-scaling check). */
+  extraRecords: { instance: OwnInstance; pattern: string }[] = [],
 ): Promise<CleanupResult[]> {
   const provenDeletions = observations.filter(
     (o) =>
@@ -49,9 +51,12 @@ export async function cleanUpOwnRecords(
       o.revisit &&
       !o.revisit.markerPresent,
   );
-  const leftovers = observations
-    .filter((o) => o.instance && !(o.revisit && !o.revisit.markerPresent))
-    .map((o) => ({ instance: o.instance!, pattern: o.action.routePattern }));
+  const leftovers = [
+    ...observations
+      .filter((o) => o.instance && !(o.revisit && !o.revisit.markerPresent))
+      .map((o) => ({ instance: o.instance!, pattern: o.action.routePattern })),
+    ...extraRecords,
+  ];
 
   const results: CleanupResult[] = [];
   if (leftovers.length === 0) return results;

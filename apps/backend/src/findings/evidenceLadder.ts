@@ -22,6 +22,15 @@ export const LEVEL_LABELS: Record<EvidenceLevel, string> = {
 export function assignLevel(f: Finding): void {
   const reproduced = f.reproduced === true;
 
+  if (f.source === "heuristic") {
+    f.kind = "improvement";
+    f.level = reproduced ? 1 : 0;
+    f.levelReason = reproduced
+      ? `heuristic match${f.standard ? " against a named standard" : ""}, present on both checks`
+      : "heuristic match that did not repeat";
+    return;
+  }
+
   if (f.source === "discovered") {
     f.kind = "improvement";
     f.level = reproduced ? 1 : 0;

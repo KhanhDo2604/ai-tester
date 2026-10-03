@@ -20,6 +20,9 @@ import { groupFindings } from "../findings/group";
 import { isExecutionFailure, judge } from "../findings/judge";
 import { reproduce, RunContext } from "../findings/reproduce";
 import { CheckedResult, Finding, subjectId } from "../findings/types";
+import { auditAccessibility } from "../heuristics/accessibility";
+import { checkListScaling } from "../heuristics/listScaling";
+import { checkStatusMessages } from "../heuristics/statusMessages";
 import { LlmClient } from "../llm/types";
 
 export interface NotChecked {
@@ -52,7 +55,7 @@ export interface ScanOptions {
   onProgress?: (message: string) => void;
 }
 
-/** The whole pipeline: crawl → detect → execute → contracts → judge → group → reproduce → Evidence Ladder. */
+/** The whole pipeline: crawl → detect → execute → contracts → judge → group → reproduce → heuristics → Evidence Ladder. */
 export async function runScan(
   config: ScanConfig,
   llm: LlmClient | undefined,
@@ -160,12 +163,26 @@ export async function runScan(
       assignLevel(finding);
     }
 
+    log("Running UX heuristics");
+    const scaling = await checkListScaling(ctx, pages);
+    scaling.notes.forEach((reason) =>
+      notChecked.push({ subject: "list scaling", reason }),
+    );
+    const heuristicFindings = [
+      ...(await auditAccessibility(ctx, pages)),
+      ...checkStatusMessages(checked),
+      ...scaling.findings,
+    ];
+    heuristicFindings.forEach(assignLevel);
+    findings.push(...heuristicFindings);
+
     log("Cleaning up own records");
     const cleanup = await cleanUpOwnRecords(
       browser,
       config,
       actionObservations,
       auth?.storageState,
+      scaling.created,
     );
 
     const byLevel = (a: Finding, b: Finding) =>
@@ -182,7 +199,7 @@ export async function runScan(
         pages: pages.map((p) => p.graph.route),
         formCandidates: candidates.length,
         actions: targets.length,
-        reruns: findings.length,
+        reruns: findings.length - heuristicFindings.length,
         llmCalls: stats?.calls ?? 0,
         llmCacheHits: stats?.cacheHits ?? 0,
         durationMs: Date.now() - startedAt,
