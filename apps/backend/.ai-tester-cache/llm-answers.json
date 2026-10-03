@@ -1,10 +1,5 @@
 {
-  "5a79f708505889f68009000ae6b0d3bf22649ce28f941fe3df2a99f59abda220": {
-    "category": "state-change",
-    "expectation": "Marking the task as complete will update its status in the system.",
-    "requiresConfirmation": false
-  },
-  "b1d08bea3aead96211a3f9b0b5e3cb2f300a8eafc105f62c9e215a6787ca223c": {
+  "ef38209ec9052e7fa30238e83225b2fa8d213cabd3fbf9a2480f2c70882a55f6": {
     "category": "destructive",
     "expectation": "The task will be permanently deleted from the system.",
     "requiresConfirmation": true
@@ -14,9 +9,22 @@
     "expectation": "The task will be marked as complete, possibly changing its status or visibility on the task list.",
     "requiresConfirmation": false
   },
-  "ef38209ec9052e7fa30238e83225b2fa8d213cabd3fbf9a2480f2c70882a55f6": {
+  "6d5187198c29fea743723257bf40be6ce064c144e0b0a8536cb512515043014a": {
     "category": "destructive",
     "expectation": "The task will be permanently deleted from the system.",
-    "requiresConfirmation": true
+    "requiresConfirmation": true,
+    "deletesCurrentAccount": false
+  },
+  "3dbaa9b59b88153f8bd9026c686bd7f144e36c88b0213a9fef9c4de5ddaf61b5": {
+    "category": "destructive",
+    "expectation": "The user's account will be permanently deleted.",
+    "requiresConfirmation": true,
+    "deletesCurrentAccount": true
+  },
+  "24c8c091dd59755722c267c4480bcd6d2660419671bd4b64644075a9d2a68046": {
+    "category": "state-change",
+    "expectation": "Marking the task as complete will update its status in the system.",
+    "requiresConfirmation": false,
+    "deletesCurrentAccount": false
   }
 }

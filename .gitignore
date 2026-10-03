@@ -11,3 +11,4 @@ server/dist
 public/dist
 
 .ai-tester-cache
+.ai-tester-data

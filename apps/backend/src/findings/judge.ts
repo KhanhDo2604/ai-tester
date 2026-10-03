@@ -17,7 +17,7 @@ const SCHEMA = {
   required: ["violated", "confidence", "reason"],
 };
 
-const EXPECTATIONS: Record<ContractName, string> = {
+export const EXPECTATIONS: Record<ContractName, string> = {
   FormValidationFeedback:
     "Submitting a form with every field empty must be prevented or produce visible feedback.",
   FormatValidation:

@@ -5,7 +5,11 @@ import { checkActionContracts } from "../contracts/actionContracts";
 import { checkContracts } from "../contracts/checkContracts";
 import { ContractResult } from "../contracts/types";
 import { ActionObservation, executeAction } from "../discovery/executeAction";
-import { executeCandidate, StorageState } from "../execution/executeCandidate";
+import {
+  executeCandidate,
+  Observation,
+  StorageState,
+} from "../execution/executeCandidate";
 import { Finding } from "./types";
 
 export interface RunContext {
@@ -20,6 +24,8 @@ export interface Reproduction {
   note: string;
   /** Present when the rerun created an own record that may need cleaning up. */
   actionObservation?: ActionObservation;
+  /** Present for form findings, e.g. so a sign-up made by the rerun can be removed. */
+  formObservation?: Observation;
 }
 
 /** Runs the finding's first subject again, from a fresh context, and checks the same contracts. */
@@ -30,20 +36,20 @@ export async function reproduce(
   const subject = finding.results[0].subject;
   let results: ContractResult[];
   let actionObservation: ActionObservation | undefined;
+  let formObservation: Observation | undefined;
 
   if (subject.kind === "form") {
     const storage =
       subject.candidate.session === "authenticated"
         ? ctx.storageState
         : undefined;
-    results = checkContracts(
-      await executeCandidate(
-        ctx.browser,
-        ctx.config,
-        subject.candidate,
-        storage,
-      ),
+    formObservation = await executeCandidate(
+      ctx.browser,
+      ctx.config,
+      subject.candidate,
+      storage,
     );
+    results = checkContracts(formObservation);
   } else {
     const storage =
       subject.action.control.session === "authenticated"
@@ -72,5 +78,6 @@ export async function reproduce(
       ? "reproduced on a second run"
       : `not reproduced on a second run (${again.map((r) => `${r.contract}: ${r.verdict}`).join(", ") || "not checked"})`,
     actionObservation,
+    formObservation,
   };
 }

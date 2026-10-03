@@ -1,5 +1,9 @@
 import { LlmClient, LlmRequest, LlmStats } from "./types";
 
+const RETRY_DELAYS_MS = [2000, 5000];
+
+class RetryableError extends Error {}
+
 export interface OllamaOptions {
   /** Defaults to http://127.0.0.1:11434. */
   baseUrl?: string;
@@ -40,8 +44,28 @@ export class OllamaClient implements LlmClient {
     this.name = `ollama/${this.model}`;
   }
 
+  /**
+   * Retries crashes and refused connections: Ollama restarts a crashed model
+   * process on the next request, so one failure shouldn't cost a finding.
+   * Timeouts and bad answers are not retried.
+   */
   async completeJson<T>(request: LlmRequest): Promise<T> {
     this.calls++;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.attempt<T>(request);
+      } catch (err) {
+        if (
+          !(err instanceof RetryableError) ||
+          attempt >= RETRY_DELAYS_MS.length
+        )
+          throw err;
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+      }
+    }
+  }
+
+  private async attempt<T>(request: LlmRequest): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -70,18 +94,20 @@ export class OllamaClient implements LlmClient {
       const reason = controller.signal.aborted
         ? `timed out after ${this.timeoutMs} ms`
         : `${String(err)}${cause ? ` (${cause.code ?? cause.message})` : ""}`;
-      throw new Error(
-        `Ollama request failed (${this.baseUrl}, model ${this.model}): ${reason}. Is "ollama serve" running?`,
-      );
+      const message = `Ollama request failed (${this.baseUrl}, model ${this.model}): ${reason}. Is "ollama serve" running?`;
+      throw controller.signal.aborted
+        ? new Error(message)
+        : new RetryableError(message);
     } finally {
       clearTimeout(timer);
     }
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      throw new Error(
-        `Ollama returned ${response.status}: ${body.slice(0, 300)}`,
-      );
+      const message = `Ollama returned ${response.status}: ${body.slice(0, 300)}`;
+      throw response.status >= 500
+        ? new RetryableError(message)
+        : new Error(message);
     }
 
     const data = (await response.json()) as { message?: { content?: string } };

@@ -16,9 +16,42 @@ type AxeViolation = Awaited<
   ReturnType<AxeBuilder["analyze"]>
 >["violations"][number];
 
+type AxeNode = AxeViolation["nodes"][number];
+
 interface RuleHits {
   violation: AxeViolation;
+  cause: string;
   pages: { pattern: string; violation: AxeViolation; reproduced: boolean }[];
+}
+
+/**
+ * Splits a rule into separate causes where one rule covers unrelated fixes.
+ * For contrast, the cause is the colour pair: every element with the same
+ * pair is fixed by one CSS change, a different pair by another.
+ */
+function causeOf(v: AxeViolation, n: AxeNode): string {
+  if (v.id !== "color-contrast") return "";
+  const data = n.any.find((c) => c.id === "color-contrast")?.data as
+    { fgColor?: string; bgColor?: string } | undefined;
+  return data?.fgColor && data.bgColor
+    ? `${data.fgColor} on ${data.bgColor}`
+    : "";
+}
+
+function splitByCause(
+  violations: AxeViolation[],
+): Map<string, { violation: AxeViolation; cause: string }> {
+  const out = new Map<string, { violation: AxeViolation; cause: string }>();
+  for (const v of violations) {
+    for (const n of v.nodes) {
+      const cause = causeOf(v, n);
+      const key = cause ? `${v.id}::${cause}` : v.id;
+      const entry = out.get(key) ?? { violation: { ...v, nodes: [] }, cause };
+      entry.violation.nodes.push(n);
+      out.set(key, entry);
+    }
+  }
+  return out;
 }
 
 async function audit(
@@ -53,8 +86,8 @@ function describeNodes(
 
 /**
  * Runs axe-core on every crawled page shape, twice (load, then reload).
- * One finding per rule for the whole app, since a rule failing on many
- * pages is usually one shared cause (a layout, a component).
+ * One finding per rule and cause for the whole app, since a rule failing on
+ * many pages is usually one shared cause (a layout, a component).
  */
 export async function auditAccessibility(
   ctx: RunContext,
@@ -72,20 +105,16 @@ export async function auditAccessibility(
     );
     try {
       await navigate(page, discovered.graph.route);
-      const first = await audit(page, network);
-      if (first.length === 0) continue;
+      const first = splitByCause(await audit(page, network));
+      if (first.size === 0) continue;
       await page.reload({ waitUntil: "domcontentloaded" });
-      const secondIds = new Set((await audit(page, network)).map((v) => v.id));
+      const second = splitByCause(await audit(page, network));
 
       const pattern = toPattern(discovered.graph.route);
-      for (const v of first) {
-        const hits = rules.get(v.id) ?? { violation: v, pages: [] };
-        hits.pages.push({
-          pattern,
-          violation: v,
-          reproduced: secondIds.has(v.id),
-        });
-        rules.set(v.id, hits);
+      for (const [key, { violation, cause }] of first) {
+        const hits = rules.get(key) ?? { violation, cause, pages: [] };
+        hits.pages.push({ pattern, violation, reproduced: second.has(key) });
+        rules.set(key, hits);
       }
     } catch {
       // A page that fails to load here was already reported by the crawl.
@@ -94,8 +123,9 @@ export async function auditAccessibility(
     }
   }
 
-  return [...rules.entries()].map(([id, hits]) => {
+  return [...rules.entries()].map(([key, hits]) => {
     const v = hits.violation;
+    const help = hits.cause ? `${v.help}: ${hits.cause}` : v.help;
     const criteria = successCriteria(v.tags);
     const patterns = hits.pages.map((p) => p.pattern);
     const elements = hits.pages.reduce(
@@ -110,20 +140,20 @@ export async function auditAccessibility(
       .slice(0, 4);
 
     return {
-      key: `a11y::${id}`,
+      key: `a11y::${key}`,
       title:
         patterns.length === 1
-          ? `${v.help} (${patterns[0]})`
-          : `${v.help} (${patterns.length} pages)`,
+          ? `${help} (${patterns[0]})`
+          : `${help} (${patterns.length} pages)`,
       kind: "improvement",
       level: 0,
       levelReason: "",
       route: patterns.length === 1 ? patterns[0] : "(several pages)",
       contracts: [],
       source: "heuristic",
-      heuristic: id,
+      heuristic: v.id,
       evidence: [
-        `axe-core rule "${id}", impact ${v.impact ?? "unknown"}: ${elements} element(s) on ${patterns.join(", ")}`,
+        `axe-core rule "${v.id}", impact ${v.impact ?? "unknown"}: ${elements} element(s) on ${patterns.join(", ")}`,
         ...examples,
         ...(elements > examples.length
           ? [`… and ${elements - examples.length} more`]

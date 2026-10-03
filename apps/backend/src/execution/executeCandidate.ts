@@ -61,6 +61,8 @@ export interface Observation {
   nativeDialogs: string[];
   /** Data requests (fetch/XHR) the interaction triggered, with their outcome. */
   requests: RequestRecord[];
+  /** Run id the generated values were built from, so they can be derived again (e.g. a sign-up's login). */
+  runId?: string;
   /** Set when the interaction itself could not be carried out. */
   error?: string;
 }
@@ -138,7 +140,7 @@ export async function executeCandidate(
     }
 
     recorder.start();
-    await fillForm(page, candidate, config);
+    observation.runId = await fillForm(page, candidate, config);
     Object.assign(observation, await submitCandidate(page, candidate));
     observation.after = await captureSignature(page, network);
     observation.requests = recorder.stop();
@@ -224,7 +226,7 @@ export function recordDataRequests(page: Page): RequestRecorder {
   };
 }
 
-function valueFor(
+export function valueFor(
   field: FieldTarget,
   candidate: Candidate,
   config: ScanConfig,

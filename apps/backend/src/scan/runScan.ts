@@ -8,12 +8,20 @@ import {
   authenticate,
   DiscoveredPage,
   discoverPages,
+  routePattern,
 } from "../crawl/discoverPages";
 import { buildActionTargets } from "../discovery/actionTargets";
 import { classifyControl } from "../discovery/classifyControl";
+import { ClassifiedAction } from "../discovery/types";
 import { ActionObservation, executeAction } from "../discovery/executeAction";
 import { cleanUpOwnRecords, CleanupResult } from "../entity/cleanup";
-import { executeCandidate } from "../execution/executeCandidate";
+import {
+  accountFromSignUp,
+  OwnAccount,
+  registerOwnAccount,
+  removeOwnAccount,
+} from "../entity/ownAccount";
+import { executeCandidate, Observation } from "../execution/executeCandidate";
 import { settleStats } from "../execution/network";
 import { assignLevel } from "../findings/evidenceLadder";
 import { groupFindings } from "../findings/group";
@@ -51,6 +59,9 @@ export interface ScanReport {
   stats: ScanStats;
 }
 
+/** Subject of the notChecked entry written when the logged-in part of the app could not be reached. */
+export const LOGGED_IN_AREA = "logged-in pages";
+
 export interface ScanOptions {
   onProgress?: (message: string) => void;
 }
@@ -69,54 +80,126 @@ export async function runScan(
   try {
     log("Crawling");
     const anonymous = await discoverPages(browser, config, "anonymous");
-    const auth = (await authenticate(browser, config, anonymous.pages)).result;
+    const notChecked: NotChecked[] = [];
+
+    // Without a test account, sign up with a throwaway one and delete it at the end.
+    let ownAccount: OwnAccount | undefined;
+    if (!config.credentials) {
+      log("Registering a test account");
+      const registration = await registerOwnAccount(
+        browser,
+        config,
+        anonymous.pages,
+      );
+      ownAccount = registration.account;
+      if (!ownAccount && registration.failure !== "no sign-up form was found") {
+        notChecked.push({
+          subject: LOGGED_IN_AREA,
+          reason: `no test account was given and signing up failed: ${registration.failure}`,
+        });
+      }
+    }
+    const scanConfig: ScanConfig = ownAccount
+      ? {
+          ...config,
+          credentials: {
+            username: ownAccount.username,
+            password: ownAccount.password,
+          },
+        }
+      : config;
+
+    const authOutcome = await authenticate(
+      browser,
+      scanConfig,
+      anonymous.pages,
+    );
+    const auth = authOutcome.result;
+    if (!auth && scanConfig.credentials) {
+      notChecked.push({
+        subject: LOGGED_IN_AREA,
+        reason: `logging in failed: ${authOutcome.failures.join("; ")}`,
+      });
+    }
     const authenticated = auth
       ? await discoverPages(
           browser,
-          config,
+          scanConfig,
           "authenticated",
           auth.storageState,
           [auth.landedOn, config.startPath ?? "/"],
         )
       : { pages: [], failures: [] };
-    const pages = [...anonymous.pages, ...authenticated.pages];
+    let pages = [...anonymous.pages, ...authenticated.pages];
     const { candidates, deferred } = collect(pages);
     const ctx: RunContext = {
       browser,
-      config,
+      config: scanConfig,
       candidates,
       storageState: auth?.storageState,
     };
 
     const checked: CheckedResult[] = [];
-    const notChecked: NotChecked[] = [];
     const actionObservations: ActionObservation[] = [];
+    const classified: ClassifiedAction[] = [];
+    const formObservations: Observation[] = [];
 
+    const runCandidates = async (list: Candidate[]) => {
+      for (const candidate of list) {
+        const storage =
+          candidate.session === "authenticated"
+            ? auth?.storageState
+            : undefined;
+        const observation = await executeCandidate(
+          browser,
+          scanConfig,
+          candidate,
+          storage,
+        );
+        formObservations.push(observation);
+        for (const result of checkContracts(observation))
+          checked.push({ result, subject: { kind: "form", candidate } });
+      }
+    };
     log(`Running ${candidates.length} form interactions`);
-    for (const candidate of candidates) {
-      const storage =
-        candidate.session === "authenticated" ? auth?.storageState : undefined;
-      const observation = await executeCandidate(
+    await runCandidates([...candidates]);
+
+    // A new account starts empty; the records the form tests just created expose its record pages.
+    if (ownAccount && auth) {
+      log("Crawling again with the records the tests created");
+      const known = new Set(pages.map((p) => routePattern(p.graph.route)));
+      const recrawl = await discoverPages(
         browser,
-        config,
-        candidate,
-        storage,
+        scanConfig,
+        "authenticated",
+        auth.storageState,
+        [auth.landedOn, config.startPath ?? "/"],
       );
-      for (const result of checkContracts(observation))
-        checked.push({ result, subject: { kind: "form", candidate } });
+      pages = [...anonymous.pages, ...recrawl.pages];
+      const added = collect(
+        recrawl.pages.filter((p) => !known.has(routePattern(p.graph.route))),
+      );
+      const fresh = added.candidates.filter(
+        (c) => !candidates.some((known) => known.id === c.id),
+      );
+      candidates.push(...fresh);
+      deferred.push(...added.deferred);
+      log(`Running ${fresh.length} more form interactions`);
+      await runCandidates(fresh);
     }
 
     const targets = buildActionTargets(deferred);
     log(`Classifying and running ${targets.length} standalone actions`);
     for (const target of targets) {
       const action = await classifyControl(llm, target);
+      classified.push(action);
       const storage =
         target.control.session === "authenticated"
           ? auth?.storageState
           : undefined;
       const observation = await executeAction(
         browser,
-        config,
+        scanConfig,
         action,
         candidates,
         storage,
@@ -160,6 +243,7 @@ export async function runScan(
       finding.evidence.push(rerun.note);
       if (rerun.actionObservation)
         actionObservations.push(rerun.actionObservation);
+      if (rerun.formObservation) formObservations.push(rerun.formObservation);
       assignLevel(finding);
     }
 
@@ -179,11 +263,40 @@ export async function runScan(
     log("Cleaning up own records");
     const cleanup = await cleanUpOwnRecords(
       browser,
-      config,
+      scanConfig,
       actionObservations,
       auth?.storageState,
       scaling.created,
     );
+    // The scan's own account plus every account its sign-up tests created.
+    const accounts = new Map<string, OwnAccount>();
+    for (const account of [
+      ownAccount,
+      ...formObservations.map((o) => accountFromSignUp(o, scanConfig)),
+    ]) {
+      if (account && !accounts.has(account.username))
+        accounts.set(account.username, account);
+    }
+    if (accounts.size)
+      log(`Deleting ${accounts.size} account(s) the tester created`);
+    for (const account of accounts.values()) {
+      const deletion = await removeOwnAccount(
+        browser,
+        scanConfig,
+        account,
+        classified,
+        anonymous.pages,
+      );
+      cleanup.push({
+        instance: {
+          path: `account ${account.username}`,
+          marker: "",
+          createdBy: account.registeredVia,
+        },
+        removed: deletion.removed,
+        note: deletion.note,
+      });
+    }
 
     const byLevel = (a: Finding, b: Finding) =>
       b.level - a.level || a.title.localeCompare(b.title);

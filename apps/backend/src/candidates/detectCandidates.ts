@@ -59,8 +59,9 @@ function toField(node: UISemanticGraphNode): FieldTarget {
   };
 }
 
+/** Disabled fields don't count: a group a user can't type into isn't an interaction. */
 function hasTextEntry(fields: FieldTarget[]): boolean {
-  return fields.some((f) => TEXT_ENTRY_ROLES.has(f.role));
+  return fields.some((f) => TEXT_ENTRY_ROLES.has(f.role) && !f.disabled);
 }
 
 /**
@@ -140,7 +141,11 @@ export function detectCandidates(
 
     const flushAsSingleFields = () => {
       for (const field of pending) {
-        if (!TEXT_ENTRY_ROLES.has(field.role) || field.tag === "textarea")
+        if (
+          !TEXT_ENTRY_ROLES.has(field.role) ||
+          field.tag === "textarea" ||
+          field.disabled
+        )
           continue;
         groups.push({
           formName: cleanText(field.label),

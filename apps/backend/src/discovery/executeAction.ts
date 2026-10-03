@@ -94,6 +94,11 @@ export async function executeAction(
     observation.skipReason = `not classified: ${action.classificationError ?? "unknown reason"}`;
     return observation;
   }
+  if (action.contract.deletesCurrentAccount) {
+    observation.skipReason =
+      "deletes the signed-in account; used only at the end of a scan to remove an account the tester registered itself";
+    return observation;
+  }
   if (!EXECUTABLE_CATEGORIES.has(action.contract.category)) {
     observation.skipReason =
       SKIP_REASONS[action.contract.category] ?? "not executable";

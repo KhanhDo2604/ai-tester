@@ -67,7 +67,15 @@ function serverKey(c: CheckedResult): string | undefined {
   return `server::${method} ${toPattern(url.split("?")[0])} ${status}`;
 }
 
-function toFinding(key: string, results: CheckedResult[]): Finding {
+/** The representative result (used for steps and the rerun): a valid submit reads most naturally. */
+const STRATEGY_ORDER = ["validSubmit", "invalidFormat", "emptySubmit"];
+const rank = (c: CheckedResult) =>
+  c.subject.kind === "form"
+    ? STRATEGY_ORDER.indexOf(c.subject.candidate.strategy)
+    : 0;
+
+function toFinding(key: string, unordered: CheckedResult[]): Finding {
+  const results = [...unordered].sort((a, b) => rank(a) - rank(b));
   const first = results[0];
   const contracts = [...new Set(results.map((r) => r.result.contract))];
   const source = results.some((r) => r.result.source === "discovered")

@@ -22,6 +22,8 @@ export interface DiscoveredContract {
   expectation: string;
   /** Whether a reasonable user would expect to confirm before it takes effect. */
   requiresConfirmation: boolean;
+  /** Deletes the signed-in user's own account: only ever run on an account the tester registered, at the end of a scan. */
+  deletesCurrentAccount: boolean;
 }
 
 /** A standalone control on a page shape (route pattern), deduplicated across concrete pages. */

@@ -16,8 +16,14 @@ const SCHEMA = {
     category: { type: "string", enum: [...ACTION_CATEGORIES] },
     expectation: { type: "string" },
     requiresConfirmation: { type: "boolean" },
+    deletesCurrentAccount: { type: "boolean" },
   },
-  required: ["category", "expectation", "requiresConfirmation"],
+  required: [
+    "category",
+    "expectation",
+    "requiresConfirmation",
+    "deletesCurrentAccount",
+  ],
 } as const;
 
 /**
@@ -66,6 +72,7 @@ export function buildDiscoveryPrompt(target: ActionTarget): string {
     "",
     "expectation — one sentence: what a reasonable user expects to happen after clicking.",
     "requiresConfirmation — true only if a reasonable user would expect to be asked to confirm before it takes effect.",
+    "deletesCurrentAccount — true only if clicking it deletes the signed-in user's own account.",
   ].join("\n");
 }
 
@@ -114,5 +121,6 @@ function validate(answer: DiscoveredContract): DiscoveredContract {
     category: answer.category,
     expectation: String(answer.expectation ?? "").trim(),
     requiresConfirmation: answer.requiresConfirmation,
+    deletesCurrentAccount: answer.deletesCurrentAccount === true,
   };
 }
