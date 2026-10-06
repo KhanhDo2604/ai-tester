@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { ReportView } from "./ReportView";
-import { ScanForm } from "./ScanForm";
-import { ScanProgress } from "./ScanProgress";
+import { ReportView } from "./reportView";
+import { ScanForm } from "./scanForm";
+import { ScanProgress } from "./scanProgress";
 
 export function navigate(hash: string): void {
   window.location.hash = hash;

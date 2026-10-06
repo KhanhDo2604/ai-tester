@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 export const API_URL: string =
-  import.meta.env.VITE_API_URL ?? "http://localhost:4100";
+  import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
 export type SuppressionReason =
   "false-positive" | "intended-behaviour" | "wont-fix";

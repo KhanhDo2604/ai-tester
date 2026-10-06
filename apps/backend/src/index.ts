@@ -3,7 +3,7 @@ import cors from "cors";
 // import { scanRouter } from "./routes/scan.route.js";
 
 const app = express();
-const port = process.env.PORT ? Number(process.env.PORT) : 4000;
+const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 app.use(cors());
 app.use(express.json());

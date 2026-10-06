@@ -13,9 +13,9 @@ import { ScanManager, ScanRequest } from "./scanManager";
  *   POST   /api/suppressions        mark a finding as not a problem
  *   DELETE /api/suppressions        undo that
  *
- * Run from apps/backend: pnpm exec tsx src/server/server.ts   (PORT, default 4100)
+ * Run from apps/backend: pnpm exec tsx src/server/server.ts   (PORT, default 3000)
  */
-const PORT = Number(process.env.PORT ?? 4100);
+const PORT = Number(process.env.PORT ?? 3000);
 const REASONS: SuppressionReason[] = [
   "false-positive",
   "intended-behaviour",
