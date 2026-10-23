@@ -1,0 +1,5 @@
+node_modules
+dist
+.ai-tester-data
+.ai-tester-cache
+pnpm-lock.yaml

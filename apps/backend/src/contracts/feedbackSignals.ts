@@ -1,4 +1,4 @@
-import { addedItems, newlyInvalidFields, sameItems } from "../state/diff";
+import { diffSignatures, StateChange, valuesOf } from "../state/diff";
 import { StateSignature } from "../state/signature";
 
 /**
@@ -8,6 +8,8 @@ import { StateSignature } from "../state/signature";
  * place.
  */
 export interface FeedbackSignals {
+  /** Every change, for checks that need more than the summary below. */
+  changes: StateChange[];
   routeChanged: boolean;
   newAlerts: string[];
   newTexts: string[];
@@ -20,13 +22,17 @@ export function feedbackSignals(
   before: StateSignature,
   after: StateSignature,
 ): FeedbackSignals {
+  const changes = diffSignatures(before, after);
   return {
-    routeChanged: before.route !== after.route,
-    newAlerts: addedItems(before.alerts, after.alerts),
-    newTexts: addedItems(before.texts, after.texts),
-    newlyInvalid: newlyInvalidFields(before.fields, after.fields),
-    newDialogs: addedItems(before.dialogs, after.dialogs),
-    headingsChanged: !sameItems(before.headings, after.headings),
+    changes,
+    routeChanged: changes.some((c) => c.kind === "routeChanged"),
+    newAlerts: valuesOf(changes, "alertAppeared"),
+    newTexts: valuesOf(changes, "textAppeared"),
+    newlyInvalid: valuesOf(changes, "fieldBecameInvalid"),
+    newDialogs: valuesOf(changes, "dialogOpened"),
+    headingsChanged: changes.some(
+      (c) => c.kind === "headingAdded" || c.kind === "headingRemoved",
+    ),
   };
 }
 
