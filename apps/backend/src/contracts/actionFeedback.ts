@@ -8,6 +8,7 @@ import { feedbackSignals, messageEvidence } from "./feedbackSignals";
  * catches is silence, where the user can't tell whether anything happened.
  */
 export const checkActionFeedback: ContractCheck = (obs) => {
+  // Hello world!
   if (obs.error) {
     return {
       verdict: "AMBIGUOUS",

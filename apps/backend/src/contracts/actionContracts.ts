@@ -1,6 +1,6 @@
 import { ContractName } from "../candidates/types";
 import { ActionObservation } from "../discovery/executeAction";
-import { addedItems } from "../state/diff";
+import { valuesOf } from "../state/diff";
 import { feedbackSignals, messageEvidence, quoteList } from "./feedbackSignals";
 import { describeRequests, serverErrorResult } from "./noServerError";
 import { ContractResult } from "./types";
@@ -82,10 +82,8 @@ function checkActionEffect(obs: ActionObservation): Check {
   if (signals.routeChanged)
     evidence.unshift(`navigated ${obs.before.route} → ${obs.after.route}`);
 
-  const beforeControls = obs.before.buttons.map((b) => b.label);
-  const afterControls = obs.after.buttons.map((b) => b.label);
-  const appeared = addedItems(beforeControls, afterControls);
-  const disappeared = addedItems(afterControls, beforeControls);
+  const appeared = valuesOf(signals.changes, "controlAdded");
+  const disappeared = valuesOf(signals.changes, "controlRemoved");
   if (!signals.routeChanged && (appeared.length || disappeared.length)) {
     if (disappeared.length)
       evidence.push(`controls removed: ${quoteList(disappeared)}`);

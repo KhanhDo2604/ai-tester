@@ -1,9 +1,14 @@
+import { Platform } from "../driver/types";
+
 /**
  * Everything the engine needs to know about a target app. Nothing in the
  * engine is specific to one app — any app-specific knowledge (where it
  * lives, a test account) enters only through this object.
  */
 export interface ScanConfig {
+  /** Which driver runs the scan. Defaults to "web". */
+  platform?: Platform;
+
   /** Origin of the app under test, e.g. "http://localhost:5173". */
   baseUrl: string;
 
@@ -20,12 +25,12 @@ export interface ScanConfig {
     password: string;
   };
 
-  /** Upper bound on distinct pages visited per session (anonymous / authenticated). Defaults to 12. */
+  /** Upper bound on distinct UI states explored per session (anonymous / authenticated). Defaults to 12. */
   maxPagesPerSession?: number;
 
   /**
-   * Links whose path or label matches this are never followed during the
-   * crawl, so the crawl can't end its own session. Defaults to log-out /
+   * Links and navigation controls whose path or label matches this are
+   * never followed while exploring, so exploration can't end its own session. Defaults to log-out /
    * sign-out style links.
    */
   excludeLinkPattern?: RegExp;
