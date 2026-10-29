@@ -1,15 +1,8 @@
-import { chromium } from "playwright";
 import { detectCandidates } from "../candidates/detectCandidates";
 import { Candidate, DeferredControl } from "../candidates/types";
 import { ScanConfig } from "../config/scanConfig";
 import { checkActionContracts } from "../contracts/actionContracts";
 import { checkContracts } from "../contracts/checkContracts";
-import {
-  authenticate,
-  DiscoveredPage,
-  discoverPages,
-  routePattern,
-} from "../crawl/discoverPages";
 import { buildActionTargets } from "../discovery/actionTargets";
 import { classifyControl } from "../discovery/classifyControl";
 import { ClassifiedAction } from "../discovery/types";
@@ -21,8 +14,21 @@ import {
   registerOwnAccount,
   removeOwnAccount,
 } from "../entity/ownAccount";
-import { executeCandidate, Observation } from "../execution/executeCandidate";
-import { settleStats } from "../execution/network";
+import { createDriver } from "../driver/createDriver";
+import { locationOf } from "../driver/types";
+import {
+  ExecutionContext,
+  executeCandidate,
+  Observation,
+} from "../execution/executeCandidate";
+import {
+  authenticate,
+  DiscoveredState,
+  ExploreResult,
+  exploreStates,
+  navigationId,
+} from "../explore/exploreStates";
+import { routePattern } from "../explore/stateKey";
 import { assignLevel } from "../findings/evidenceLadder";
 import { groupFindings } from "../findings/group";
 import { isExecutionFailure, judge } from "../findings/judge";
@@ -66,7 +72,7 @@ export interface ScanOptions {
   onProgress?: (message: string) => void;
 }
 
-/** The whole pipeline: crawl → detect → execute → contracts → judge → group → reproduce → heuristics → Evidence Ladder. */
+/** The whole pipeline: explore → detect → execute → contracts → judge → group → reproduce → heuristics → Evidence Ladder. */
 export async function runScan(
   config: ScanConfig,
   llm: LlmClient | undefined,
@@ -74,23 +80,31 @@ export async function runScan(
 ): Promise<ScanReport> {
   const log = options.onProgress ?? (() => {});
   const startedAt = Date.now();
-  const waitAtStart = settleStats.totalWaitMs;
-  const browser = await chromium.launch();
+  const driver = await createDriver(config);
 
   try {
-    log("Crawling");
-    const anonymous = await discoverPages(browser, config, "anonymous");
+    log("Exploring");
+    const anonymous = await exploreStates(driver, config, "anonymous");
     const notChecked: NotChecked[] = [];
+    const inMemoryStates = new Set(anonymous.inMemoryStates);
+    const navigation = new Set(anonymous.navigation);
+    const noteFailures = (explored: ExploreResult) => {
+      for (const f of explored.failures)
+        notChecked.push({
+          subject: `${f.session} state ${f.location}`,
+          reason: f.error,
+        });
+      explored.inMemoryStates.forEach((k) => inMemoryStates.add(k));
+      explored.navigation.forEach((n) => navigation.add(n));
+    };
+    noteFailures(anonymous);
+    const baseCtx: ExecutionContext = { driver, config, inMemoryStates };
 
     // Without a test account, sign up with a throwaway one and delete it at the end.
     let ownAccount: OwnAccount | undefined;
     if (!config.credentials) {
       log("Registering a test account");
-      const registration = await registerOwnAccount(
-        browser,
-        config,
-        anonymous.pages,
-      );
+      const registration = await registerOwnAccount(baseCtx, anonymous.states);
       ownAccount = registration.account;
       if (!ownAccount && registration.failure !== "no sign-up form was found") {
         notChecked.push({
@@ -109,10 +123,11 @@ export async function runScan(
         }
       : config;
 
+    const execCtx: ExecutionContext = { ...baseCtx, config: scanConfig };
     const authOutcome = await authenticate(
-      browser,
+      driver,
       scanConfig,
-      anonymous.pages,
+      anonymous.states,
     );
     const auth = authOutcome.result;
     if (!auth && scanConfig.credentials) {
@@ -121,23 +136,20 @@ export async function runScan(
         reason: `logging in failed: ${authOutcome.failures.join("; ")}`,
       });
     }
-    const authenticated = auth
-      ? await discoverPages(
-          browser,
+    const entries = auth ? [auth.landedOn, config.startPath ?? "/"] : [];
+    let authenticated = auth
+      ? await exploreStates(
+          driver,
           scanConfig,
           "authenticated",
-          auth.storageState,
-          [auth.landedOn, config.startPath ?? "/"],
+          auth.storage,
+          entries,
         )
-      : { pages: [], failures: [] };
-    let pages = [...anonymous.pages, ...authenticated.pages];
-    const { candidates, deferred } = collect(pages);
-    const ctx: RunContext = {
-      browser,
-      config: scanConfig,
-      candidates,
-      storageState: auth?.storageState,
-    };
+      : undefined;
+    if (authenticated) noteFailures(authenticated);
+    let states = [...anonymous.states, ...(authenticated?.states ?? [])];
+    const { candidates, deferred } = collect(states, navigation);
+    const ctx: RunContext = { ...execCtx, candidates, storage: auth?.storage };
 
     const checked: CheckedResult[] = [];
     const actionObservations: ActionObservation[] = [];
@@ -147,15 +159,8 @@ export async function runScan(
     const runCandidates = async (list: Candidate[]) => {
       for (const candidate of list) {
         const storage =
-          candidate.session === "authenticated"
-            ? auth?.storageState
-            : undefined;
-        const observation = await executeCandidate(
-          browser,
-          scanConfig,
-          candidate,
-          storage,
-        );
+          candidate.session === "authenticated" ? auth?.storage : undefined;
+        const observation = await executeCandidate(ctx, candidate, storage);
         formObservations.push(observation);
         for (const result of checkContracts(observation))
           checked.push({ result, subject: { kind: "form", candidate } });
@@ -166,18 +171,21 @@ export async function runScan(
 
     // A new account starts empty; the records the form tests just created expose its record pages.
     if (ownAccount && auth) {
-      log("Crawling again with the records the tests created");
-      const known = new Set(pages.map((p) => routePattern(p.graph.route)));
-      const recrawl = await discoverPages(
-        browser,
+      log("Exploring again with the records the tests created");
+      const known = new Set(states.map(stateIdentity));
+      authenticated = await exploreStates(
+        driver,
         scanConfig,
         "authenticated",
-        auth.storageState,
-        [auth.landedOn, config.startPath ?? "/"],
+        auth.storage,
+        entries,
       );
-      pages = [...anonymous.pages, ...recrawl.pages];
+      authenticated.inMemoryStates.forEach((k) => inMemoryStates.add(k));
+      authenticated.navigation.forEach((n) => navigation.add(n));
+      states = [...anonymous.states, ...authenticated.states];
       const added = collect(
-        recrawl.pages.filter((p) => !known.has(routePattern(p.graph.route))),
+        authenticated.states.filter((s) => !known.has(stateIdentity(s))),
+        navigation,
       );
       const fresh = added.candidates.filter(
         (c) => !candidates.some((known) => known.id === c.id),
@@ -194,16 +202,8 @@ export async function runScan(
       const action = await classifyControl(llm, target);
       classified.push(action);
       const storage =
-        target.control.session === "authenticated"
-          ? auth?.storageState
-          : undefined;
-      const observation = await executeAction(
-        browser,
-        scanConfig,
-        action,
-        candidates,
-        storage,
-      );
+        target.control.session === "authenticated" ? auth?.storage : undefined;
+      const observation = await executeAction(ctx, action, candidates, storage);
       actionObservations.push(observation);
       for (const result of checkActionContracts(observation))
         checked.push({ result, subject: { kind: "action", action } });
@@ -248,12 +248,16 @@ export async function runScan(
     }
 
     log("Running UX heuristics");
-    const scaling = await checkListScaling(ctx, pages);
+    const scaling = await checkListScaling(ctx, states);
     scaling.notes.forEach((reason) =>
       notChecked.push({ subject: "list scaling", reason }),
     );
+    const accessibility = await auditAccessibility(ctx, states);
+    accessibility.notes.forEach((reason) =>
+      notChecked.push({ subject: "accessibility", reason }),
+    );
     const heuristicFindings = [
-      ...(await auditAccessibility(ctx, pages)),
+      ...accessibility.findings,
       ...checkStatusMessages(checked),
       ...scaling.findings,
     ];
@@ -262,10 +266,9 @@ export async function runScan(
 
     log("Cleaning up own records");
     const cleanup = await cleanUpOwnRecords(
-      browser,
-      scanConfig,
+      ctx,
       actionObservations,
-      auth?.storageState,
+      auth?.storage,
       scaling.created,
     );
     // The scan's own account plus every account its sign-up tests created.
@@ -281,11 +284,10 @@ export async function runScan(
       log(`Deleting ${accounts.size} account(s) the tester created`);
     for (const account of accounts.values()) {
       const deletion = await removeOwnAccount(
-        browser,
-        scanConfig,
+        ctx,
         account,
         classified,
-        anonymous.pages,
+        anonymous.states,
       );
       cleanup.push({
         instance: {
@@ -309,36 +311,44 @@ export async function runScan(
       notChecked,
       cleanup,
       stats: {
-        pages: pages.map((p) => p.graph.route),
+        pages: states.map((s) => locationOf(s.path)),
         formCandidates: candidates.length,
         actions: targets.length,
         reruns: findings.length - heuristicFindings.length,
         llmCalls: stats?.calls ?? 0,
         llmCacheHits: stats?.cacheHits ?? 0,
         durationMs: Date.now() - startedAt,
-        networkWaitMs: settleStats.totalWaitMs - waitAtStart,
+        networkWaitMs: driver.idleWaitMs(),
       },
     };
   } finally {
-    await browser.close();
+    await driver.close();
   }
 }
 
-function collect(pages: DiscoveredPage[]): {
-  candidates: Candidate[];
-  deferred: DeferredControl[];
-} {
+/** Addressable states are one per route pattern; others are told apart by their key. */
+function stateIdentity(s: DiscoveredState): string {
+  return s.path.steps.length ? s.key : routePattern(s.graph.route);
+}
+
+/** Candidates and standalone controls of every state. Controls already used as navigation need no classification. */
+function collect(
+  states: DiscoveredState[],
+  navigation: Set<string>,
+): { candidates: Candidate[]; deferred: DeferredControl[] } {
   const candidates: Candidate[] = [];
   const deferred: DeferredControl[] = [];
   const seen = new Set<string>();
-  for (const page of pages) {
-    const detected = detectCandidates(page.graph, page.session);
+  for (const state of states) {
+    const detected = detectCandidates(state.graph, state.session, state.path);
     for (const c of detected.candidates) {
       if (seen.has(c.id)) continue;
       seen.add(c.id);
       candidates.push(c);
     }
-    deferred.push(...detected.deferred);
+    deferred.push(
+      ...detected.deferred.filter((d) => !navigation.has(navigationId(d))),
+    );
   }
   return { candidates, deferred };
 }

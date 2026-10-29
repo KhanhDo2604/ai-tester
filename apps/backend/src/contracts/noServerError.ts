@@ -1,4 +1,4 @@
-import { RequestRecord } from "../execution/executeCandidate";
+import { RequestRecord } from "../driver/types";
 import { ContractCheck, ContractResult } from "./types";
 
 /**

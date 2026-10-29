@@ -14,10 +14,9 @@ import { quoteList } from "./feedbackSignals";
  * messages are transient by design and are expected to disappear on
  * reload, so they are left out.
  *
- * Known limitation: an app that keeps state only in memory (nothing
- * persisted across reloads) will differ after reload by design. The
- * Evidence Ladder (Phase 4) and the reproducibility rerun are what keep
- * that from being reported as a confirmed bug.
+ * A state the explorer found a reload does not return to (the app keeps
+ * that screen in memory only) is not compared: the reload shows another
+ * screen by design, which says nothing about stale data.
  */
 export const checkStateConsistency: ContractCheck = (obs) => {
   if (obs.error) {
@@ -31,6 +30,15 @@ export const checkStateConsistency: ContractCheck = (obs) => {
       verdict: "NOT_APPLICABLE",
       evidence: [
         "the action did not run, so there is no post-action state to compare",
+      ],
+    };
+  }
+
+  if (obs.afterInMemoryOnly) {
+    return {
+      verdict: "NOT_APPLICABLE",
+      evidence: [
+        "the action led to a screen the app keeps only in memory; a reload returns to another screen, so there is nothing to compare",
       ],
     };
   }

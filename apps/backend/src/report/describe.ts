@@ -2,6 +2,7 @@ import { Candidate, FieldTarget } from "../candidates/types";
 import { ClassifiedAction } from "../discovery/types";
 import { formatKind } from "../execution/fillValues";
 import { EXPECTATIONS } from "../findings/judge";
+import { StatePath } from "../driver/types";
 import { Finding, subjectName, subjectRoute } from "../findings/types";
 import { cleanText } from "../graph/walk";
 
@@ -83,7 +84,7 @@ export function describe(f: Finding): Description {
 
 function formSteps(c: Candidate): string[] {
   const steps = c.session === "authenticated" ? [LOGIN_STEP] : [];
-  steps.push(`Open ${c.route}`);
+  steps.push(...reachSteps(c.path));
   for (const field of c.fields) {
     const step = fieldStep(field, c);
     if (step) steps.push(step);
@@ -95,6 +96,13 @@ function formSteps(c: Candidate): string[] {
       : `Click "${cleanText(c.submit.label)}"`,
   );
   return steps;
+}
+
+function reachSteps(path: StatePath): string[] {
+  return [
+    `Open ${path.entry}`,
+    ...path.steps.map((s) => `Click "${cleanText(s.label)}"`),
+  ];
 }
 
 function fieldStep(field: FieldTarget, c: Candidate): string | undefined {
@@ -125,7 +133,7 @@ function actionSteps(a: ClassifiedAction): string[] {
       `Open any ${a.routePattern} page (the scan used a record it created itself, never existing data)`,
     );
   } else {
-    steps.push(`Open ${a.routePattern}`);
+    steps.push(...reachSteps(a.control.path));
   }
   steps.push(`Click "${cleanText(a.control.label)}"`);
   return steps;

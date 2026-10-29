@@ -1,3 +1,4 @@
+import { locationOf, StatePath } from "../driver/types";
 import { UISemanticGraph, UISemanticGraphNode } from "../graph/types";
 import { cleanText, walk } from "../graph/walk";
 import { formatKind } from "../execution/fillValues";
@@ -98,7 +99,9 @@ function hasTextEntry(fields: FieldTarget[]): boolean {
 export function detectCandidates(
   graph: UISemanticGraph,
   session: SessionKind,
+  path: StatePath = { entry: graph.route, steps: [] },
 ): { candidates: Candidate[]; deferred: DeferredControl[] } {
+  const location = locationOf(path);
   const groups: InteractionGroup[] = [];
   const coveredButtons = new Set<string>();
 
@@ -213,9 +216,10 @@ export function detectCandidates(
         : group.strategies;
 
     return strategies.map((strategy) => ({
-      id: `${graph.route} :: ${group.formName} :: ${strategy}`,
+      id: `${location} :: ${group.formName} :: ${strategy}`,
       kind: "formSubmit" as const,
       route: graph.route,
+      path,
       session,
       strategy,
       contracts: CONTRACTS_BY_STRATEGY[strategy],
@@ -240,6 +244,7 @@ export function detectCandidates(
       return;
     deferred.push({
       route: graph.route,
+      path,
       session,
       role: node.role,
       label: node.label,

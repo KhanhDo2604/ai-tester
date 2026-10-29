@@ -1,5 +1,6 @@
 import { DeferredControl } from "../candidates/types";
-import { routePattern } from "../crawl/discoverPages";
+import { locationOf } from "../driver/types";
+import { routePattern } from "../explore/stateKey";
 import { ActionTarget } from "./types";
 
 /**
@@ -19,7 +20,7 @@ export function buildActionTargets(
     const key =
       control.region === "persistent"
         ? `persistent::${control.session}::${control.role}::${control.label}`
-        : `${control.session}::${pattern}::${control.role}::${control.label}`;
+        : `${control.session}::${control.path.steps.length ? locationOf(control.path) : pattern}::${control.role}::${control.label}`;
     if (!targets.has(key)) targets.set(key, { control, routePattern: pattern });
   }
   return [...targets.values()];

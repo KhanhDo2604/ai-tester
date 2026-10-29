@@ -47,6 +47,7 @@ export interface UISemanticGraphNode {
   /** Extra attributes the accessibility tree doesn't expose, read from the DOM subset. */
   domExtra?: {
     tag?: string;
+    /** Absolute URL. */
     href?: string;
     inputType?: string;
     hidden?: boolean;

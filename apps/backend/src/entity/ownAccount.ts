@@ -1,25 +1,19 @@
-import { Browser, Page } from "playwright";
 import { detectCandidates } from "../candidates/detectCandidates";
 import { Candidate } from "../candidates/types";
 import { ScanConfig } from "../config/scanConfig";
-import {
-  authenticate,
-  DiscoveredPage,
-  routePattern,
-} from "../crawl/discoverPages";
+import { errorText } from "../driver/types";
 import { confirmIfAsked } from "../discovery/executeAction";
 import { ClassifiedAction } from "../discovery/types";
 import {
+  ExecutionContext,
   executeCandidate,
-  navigate,
   Observation,
-  openPage,
   valueFor,
 } from "../execution/executeCandidate";
 import { formatKind } from "../execution/fillValues";
+import { authenticate, DiscoveredState } from "../explore/exploreStates";
+import { routePattern } from "../explore/stateKey";
 import { captureSignature } from "../state/signature";
-
-type AriaRole = Parameters<Page["getByRole"]>[0];
 
 export interface OwnAccount {
   username: string;
@@ -75,19 +69,18 @@ export function accountFromSignUp(
  * a test account can still reach the logged-in part of the app.
  */
 export async function registerOwnAccount(
-  browser: Browser,
-  config: ScanConfig,
-  pages: DiscoveredPage[],
+  ctx: ExecutionContext,
+  states: DiscoveredState[],
 ): Promise<{ account?: OwnAccount; failure: string }> {
-  const forms = pages
-    .flatMap((p) => detectCandidates(p.graph, "anonymous").candidates)
+  const forms = states
+    .flatMap((s) => detectCandidates(s.graph, "anonymous", s.path).candidates)
     .filter((c) => isSignUpForm(c) && c.strategy === "validSubmit");
   if (forms.length === 0) return { failure: "no sign-up form was found" };
 
   const failures: string[] = [];
   for (const form of forms) {
-    const observation = await executeCandidate(browser, config, form);
-    const account = accountFromSignUp(observation, config);
+    const observation = await executeCandidate(ctx, form);
+    const account = accountFromSignUp(observation, ctx.config);
     if (account) return { account, failure: "" };
     failures.push(
       `${form.route}: ${observation.error ?? "still on the sign-up page after submitting"}`,
@@ -102,11 +95,10 @@ export async function registerOwnAccount(
  * Only ever called with credentials the tester generated itself.
  */
 export async function removeOwnAccount(
-  browser: Browser,
-  config: ScanConfig,
+  ctx: ExecutionContext,
   account: OwnAccount,
   actions: ClassifiedAction[],
-  anonymousPages: DiscoveredPage[],
+  anonymousStates: DiscoveredState[],
 ): Promise<{ removed: boolean; note: string }> {
   const control = actions.find(
     (a) =>
@@ -120,47 +112,31 @@ export async function removeOwnAccount(
     };
 
   const accountConfig: ScanConfig = {
-    ...config,
+    ...ctx.config,
     credentials: { username: account.username, password: account.password },
   };
-  const login = await authenticate(browser, accountConfig, anonymousPages);
+  const login = await authenticate(ctx.driver, accountConfig, anonymousStates);
   if (!login.result)
     return {
       removed: false,
       note: "could not log in with it, so it could not be deleted",
     };
 
-  const { context, page, network } = await openPage(
-    browser,
-    config,
-    login.result.storageState,
-  );
-  const nativeDialogs: string[] = [];
-  page.on("dialog", async (d) => {
-    nativeDialogs.push(d.message());
-    await d.accept().catch(() => {});
-  });
-
+  const session = await ctx.driver.newSession(login.result.storage);
   const label = control.control.label;
   try {
-    await navigate(page, control.control.route);
-    const before = await captureSignature(page, network);
-    await page
-      .getByRole(control.control.role as AriaRole, { name: label, exact: true })
-      .first()
-      .click();
-    await network.settle();
-    await confirmIfAsked(page, network, label, before.dialogs, nativeDialogs);
+    await session.restore(control.control.path);
+    const before = await captureSignature(session);
+    await session.click(control.control);
+    await session.settle();
+    await confirmIfAsked(session, label, before.dialogs, session.takeDialogs());
   } catch (err) {
-    return {
-      removed: false,
-      note: `"${label}" failed: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
-    };
+    return { removed: false, note: `"${label}" failed: ${errorText(err)}` };
   } finally {
-    await context.close();
+    await session.close();
   }
 
-  const again = await authenticate(browser, accountConfig, anonymousPages);
+  const again = await authenticate(ctx.driver, accountConfig, anonymousStates);
   return again.result
     ? {
         removed: false,

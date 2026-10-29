@@ -1,8 +1,6 @@
-import { Page } from "playwright";
-import { buildUISemanticGraph } from "../graph/buildGraph";
+import { Session } from "../driver/types";
 import { UISemanticGraph } from "../graph/types";
 import { cleanText, textContent, walk } from "../graph/walk";
-import { NetworkTracker } from "../execution/network";
 
 export interface FieldState {
   label: string;
@@ -102,10 +100,8 @@ export function signatureFromGraph(graph: UISemanticGraph): StateSignature {
 
 /** Waits for the page to settle, then captures its signature. */
 export async function captureSignature(
-  page: Page,
-  network: NetworkTracker,
+  session: Session,
 ): Promise<StateSignature> {
-  await network.settle();
-  const graph = await buildUISemanticGraph(page);
-  return signatureFromGraph(graph);
+  await session.settle();
+  return signatureFromGraph(await session.observe());
 }

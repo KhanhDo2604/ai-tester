@@ -1,18 +1,10 @@
-import { Page } from "playwright";
-import { DiscoveredPage } from "../crawl/discoverPages";
+import { errorText, RequestRecorder, Session } from "../driver/types";
 import {
   createOwnInstance,
   OwnInstance,
   rankCreators,
 } from "../entity/ownInstance";
-import {
-  navigate,
-  openPage,
-  recordDataRequests,
-  RequestRecorder,
-} from "../execution/executeCandidate";
-import { NetworkTracker } from "../execution/network";
-import { buildUISemanticGraph } from "../graph/buildGraph";
+import { DiscoveredState } from "../explore/exploreStates";
 import { walk } from "../graph/walk";
 import { RunContext } from "../findings/reproduce";
 import { Finding, toPattern } from "../findings/types";
@@ -42,13 +34,15 @@ export interface ScalingResult {
  */
 export async function checkListScaling(
   ctx: RunContext,
-  pages: DiscoveredPage[],
+  states: DiscoveredState[],
 ): Promise<ScalingResult> {
   const out: ScalingResult = { findings: [], created: [], notes: [] };
 
-  for (const discovered of pages) {
+  for (const discovered of states) {
     const route = discovered.graph.route;
-    if (toPattern(route).includes(":id")) continue;
+    // Measured by reopening the list's address, so only screens that have one.
+    if (toPattern(route).includes(":id") || discovered.path.steps.length > 0)
+      continue;
     const recordPattern = mostLinkedRecordPattern(discovered);
     if (!recordPattern) continue;
 
@@ -65,26 +59,15 @@ export async function checkListScaling(
     }
 
     const storage =
-      discovered.session === "authenticated" ? ctx.storageState : undefined;
-    const { context, page, network } = await openPage(
-      ctx.browser,
-      ctx.config,
-      storage,
-    );
-    const recorder = recordDataRequests(page);
+      discovered.session === "authenticated" ? ctx.storage : undefined;
+    const session = await ctx.driver.newSession(storage);
+    const recorder = session.recordRequests();
     try {
-      const before = await measure(
-        page,
-        network,
-        recorder,
-        route,
-        recordPattern,
-      );
+      const before = await measure(session, recorder, route, recordPattern);
 
       for (let i = 0; i < EXTRA_RECORDS; i++) {
         const result = await createOwnInstance(
-          page,
-          network,
+          session,
           ctx.config,
           creators[0],
           recordPattern,
@@ -93,13 +76,7 @@ export async function checkListScaling(
         out.created.push({ instance: result, pattern: recordPattern });
       }
 
-      const after = await measure(
-        page,
-        network,
-        recorder,
-        route,
-        recordPattern,
-      );
+      const after = await measure(session, recorder, route, recordPattern);
       const added = after.records - before.records;
       if (added < 1) {
         out.notes.push(
@@ -109,11 +86,9 @@ export async function checkListScaling(
       }
       out.findings.push(...compare(route, before, after, added));
     } catch (err) {
-      out.notes.push(
-        `${route}: scaling check failed — ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
-      );
+      out.notes.push(`${route}: scaling check failed — ${errorText(err)}`);
     } finally {
-      await context.close();
+      await session.close();
     }
   }
 
@@ -121,12 +96,12 @@ export async function checkListScaling(
 }
 
 function mostLinkedRecordPattern(
-  discovered: DiscoveredPage,
+  discovered: DiscoveredState,
 ): string | undefined {
   const counts = new Map<string, number>();
   walk(discovered.graph.root, (node) => {
     if (node.type !== "link" || !node.domExtra?.href) return;
-    const pattern = toPattern(new URL(node.domExtra.href, "http://x").pathname);
+    const pattern = toPattern(new URL(node.domExtra.href).pathname);
     if (pattern.includes(":id"))
       counts.set(pattern, (counts.get(pattern) ?? 0) + 1);
   });
@@ -134,8 +109,7 @@ function mostLinkedRecordPattern(
 }
 
 async function measure(
-  page: Page,
-  network: NetworkTracker,
+  session: Session,
   recorder: RequestRecorder,
   route: string,
   recordPattern: string,
@@ -145,8 +119,8 @@ async function measure(
 
   for (let i = 0; i < LOADS_PER_MEASUREMENT; i++) {
     recorder.start();
-    await navigate(page, route);
-    await network.settle();
+    await session.open(route);
+    await session.settle();
     const requests = recorder.stop();
 
     const fastestPerKey = new Map<string, number>();
@@ -168,12 +142,11 @@ async function measure(
       durations.set(key, [...(durations.get(key) ?? []), ms]);
 
     records = 0;
-    walk((await buildUISemanticGraph(page)).root, (node) => {
+    walk((await session.observe()).root, (node) => {
       if (
         node.type === "link" &&
         node.domExtra?.href &&
-        toPattern(new URL(node.domExtra.href, page.url()).pathname) ===
-          recordPattern
+        toPattern(new URL(node.domExtra.href).pathname) === recordPattern
       ) {
         records++;
       }

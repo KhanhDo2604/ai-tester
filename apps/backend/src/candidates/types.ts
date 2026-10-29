@@ -1,3 +1,5 @@
+import { ElementTarget, FieldTarget, StatePath } from "../driver/types";
+
 export type SessionKind = "anonymous" | "authenticated";
 
 export type ContractName =
@@ -11,29 +13,39 @@ export type ContractName =
   | "ConfirmBeforeDestructive"
   | "DeletionEffective";
 
-//How a candidate is exercised. Every strategy also checks NoServerError.
+/**
+ * How a candidate is exercised:
+ * - emptySubmit: clear every field, then submit — checks Form Validation Feedback.
+ * - validSubmit: fill every field with a plausible value, then submit —
+ *   checks Action Feedback and State Consistency.
+ * - invalidFormat: fill every field validly except fields with a known
+ *   format (email, URL), which get a malformed value — checks Format
+ *   Validation. Only generated when such a field is present and editable.
+ *
+ * Every strategy also checks NoServerError.
+ */
 export type Strategy = "emptySubmit" | "validSubmit" | "invalidFormat";
 
-//interaction
+/**
+ * How the interaction is committed:
+ * - click: click the group's submit control.
+ * - enter: press Enter in the last text field — for inputs that have no
+ *   submit control at all (a todo entry box, a search box).
+ */
 export type SubmitMode = "click" | "enter";
 
-//How the fields were grouped into one interaction
+/**
+ * How the fields were grouped into one interaction:
+ * - form: they sit inside a real <form> element.
+ * - adjacent: no <form>, but the fields are immediately followed by a
+ *   button in the same container (common in apps that never use <form>).
+ * - single: one text field with no button next to it, committed with Enter.
+ */
 export type Grouping = "form" | "adjacent" | "single";
 
-/** Enough information to find an element again with page.getByRole(role, { name }). */
-export interface FieldTarget {
-  role: string;
-  label: string;
-  inputType?: string;
-  tag?: string;
-  /** Disabled at detection time — the user can't edit it, so the tester doesn't either. */
-  disabled?: boolean;
-}
-
-export interface ControlTarget {
-  role: string;
-  label: string;
-}
+export type { FieldTarget } from "../driver/types";
+/** A control found again by role and name. */
+export type ControlTarget = ElementTarget;
 
 /**
  * One candidate = one concrete interaction plus the contracts it is
@@ -43,7 +55,10 @@ export interface ControlTarget {
 export interface FormSubmitCandidate {
   id: string;
   kind: "formSubmit";
+  /** Address of the state the form is in (the pathname on the web). */
   route: string;
+  /** How to reach that state from scratch. */
+  path: StatePath;
   session: SessionKind;
   strategy: Strategy;
   contracts: ContractName[];
@@ -67,6 +82,7 @@ export type Candidate = FormSubmitCandidate;
  */
 export interface DeferredControl {
   route: string;
+  path: StatePath;
   session: SessionKind;
   role: string;
   label: string;

@@ -16,12 +16,8 @@ import {
   SessionStorage,
   StatePath,
 } from "../types";
-import { buildUISemanticGraph } from "../../graph/buildGraph";
-import {
-  NetworkTracker,
-  settleStats,
-  trackNetwork,
-} from "../../execution/network";
+import { buildUISemanticGraph } from "./buildGraph";
+import { NetworkTracker, settleStats, trackNetwork } from "./network";
 
 type AriaRole = Parameters<Page["getByRole"]>[0];
 type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;

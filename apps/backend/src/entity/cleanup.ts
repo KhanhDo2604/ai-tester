@@ -1,19 +1,12 @@
-import { Browser, Page } from "playwright";
-import { ScanConfig } from "../config/scanConfig";
+import { errorText, SessionStorage } from "../driver/types";
 import {
   ActionObservation,
   confirmIfAsked,
   signatureContains,
 } from "../discovery/executeAction";
-import {
-  navigate,
-  openPage,
-  StorageState,
-} from "../execution/executeCandidate";
+import { ExecutionContext } from "../execution/executeCandidate";
 import { captureSignature } from "../state/signature";
 import { OwnInstance } from "./ownInstance";
-
-type AriaRole = Parameters<Page["getByRole"]>[0];
 
 export interface CleanupResult {
   instance: OwnInstance;
@@ -37,10 +30,9 @@ export interface CleanupResult {
  * even if a path were wrong.
  */
 export async function cleanUpOwnRecords(
-  browser: Browser,
-  config: ScanConfig,
+  ctx: ExecutionContext,
   observations: ActionObservation[],
-  storageState?: StorageState,
+  storage?: SessionStorage,
   /** Own records created outside actions (e.g. by the list-scaling check). */
   extraRecords: { instance: OwnInstance; pattern: string }[] = [],
 ): Promise<CleanupResult[]> {
@@ -61,16 +53,7 @@ export async function cleanUpOwnRecords(
   const results: CleanupResult[] = [];
   if (leftovers.length === 0) return results;
 
-  const { context, page, network } = await openPage(
-    browser,
-    config,
-    storageState,
-  );
-  const nativeDialogs: string[] = [];
-  page.on("dialog", async (dialog) => {
-    nativeDialogs.push(dialog.message());
-    await dialog.accept().catch(() => {});
-  });
+  const session = await ctx.driver.newSession(storage);
 
   try {
     for (const { instance, pattern } of leftovers) {
@@ -87,8 +70,8 @@ export async function cleanUpOwnRecords(
       }
 
       try {
-        await navigate(page, instance.path);
-        const before = await captureSignature(page, network);
+        await session.open(instance.path);
+        const before = await captureSignature(session);
         if (!signatureContains(before, instance.marker)) {
           results.push({
             instance,
@@ -98,26 +81,19 @@ export async function cleanUpOwnRecords(
           continue;
         }
 
-        nativeDialogs.length = 0;
+        session.takeDialogs();
         const label = deletion.action.control.label;
-        await page
-          .getByRole(deletion.action.control.role as AriaRole, {
-            name: label,
-            exact: true,
-          })
-          .first()
-          .click();
-        await network.settle();
+        await session.click(deletion.action.control);
+        await session.settle();
         await confirmIfAsked(
-          page,
-          network,
+          session,
           label,
           before.dialogs,
-          nativeDialogs,
+          session.takeDialogs(),
         );
 
-        await navigate(page, instance.path);
-        const after = await captureSignature(page, network);
+        await session.open(instance.path);
+        const after = await captureSignature(session);
         const removed = !signatureContains(after, instance.marker);
         results.push({
           instance,
@@ -127,15 +103,11 @@ export async function cleanUpOwnRecords(
             : `"${label}" did not remove it`,
         });
       } catch (err) {
-        results.push({
-          instance,
-          removed: false,
-          note: err instanceof Error ? err.message.split("\n")[0] : String(err),
-        });
+        results.push({ instance, removed: false, note: errorText(err) });
       }
     }
   } finally {
-    await context.close();
+    await session.close();
   }
 
   return results;

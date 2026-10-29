@@ -1,4 +1,5 @@
 import { Candidate, ContractName } from "../candidates/types";
+import { locationOf } from "../driver/types";
 import { ContractResult } from "../contracts/types";
 import { ClassifiedAction } from "../discovery/types";
 
@@ -57,7 +58,11 @@ export function subjectName(s: Subject): string {
   return s.kind === "form" ? s.candidate.formName : s.action.control.label;
 }
 
+/** Where the subject lives: its route pattern, or the click path for a screen without its own address. */
 export function subjectRoute(s: Subject): string {
+  const path = s.kind === "form" ? s.candidate.path : s.action.control.path;
+  if (path.steps.length)
+    return locationOf({ entry: toPattern(path.entry), steps: path.steps });
   return s.kind === "form"
     ? toPattern(s.candidate.route)
     : s.action.routePattern;

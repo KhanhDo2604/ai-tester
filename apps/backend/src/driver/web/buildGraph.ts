@@ -1,10 +1,7 @@
 import { Page } from "playwright";
-import {
-  extractAccessibilityTree,
-  RawAXNode,
-} from "../extraction/accessibilityTree";
-import { describeDomNode } from "../extraction/domSubset";
-import { UISemanticGraph, UISemanticGraphNode } from "./types";
+import { extractAccessibilityTree, RawAXNode } from "./accessibilityTree";
+import { describeDomNode } from "./domSubset";
+import { UISemanticGraph, UISemanticGraphNode } from "../../graph/types";
 
 const ROLE_TO_TYPE: Record<string, UISemanticGraphNode["type"]> = {
   form: "form",
@@ -36,6 +33,19 @@ const TRANSPARENT_ROLES = new Set([
   "paragraph",
   "LabelText",
 ]);
+
+/** Links are stored as absolute URLs, so nothing downstream needs the page to resolve them. */
+function absoluteHref(
+  href: string | undefined,
+  base: string,
+): string | undefined {
+  if (href === undefined) return undefined;
+  try {
+    return new URL(href, base).href;
+  } catch {
+    return undefined;
+  }
+}
 
 function normalizeType(role?: string): UISemanticGraphNode["type"] {
   return (role ? ROLE_TO_TYPE[role] : undefined) ?? "container";
@@ -194,7 +204,7 @@ export async function buildUISemanticGraph(
         domExtra: domInfo
           ? {
               tag: domInfo.tag || undefined,
-              href: domInfo.href,
+              href: absoluteHref(domInfo.href, page.url()),
               inputType: domInfo.inputType,
               hidden: domInfo.hidden,
             }

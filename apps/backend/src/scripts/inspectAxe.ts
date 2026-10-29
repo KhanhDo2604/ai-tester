@@ -1,8 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
-import { chromium } from "playwright";
 import { ScanConfig } from "../config/scanConfig";
-import { authenticate, discoverPages } from "../crawl/discoverPages";
-import { navigate, openPage } from "../execution/executeCandidate";
+import { createWebDriver } from "../driver/web/webDriver";
+import { authenticate, exploreStates } from "../explore/exploreStates";
 
 /**
  * Diagnostic: every axe result for one page, including "incomplete"
@@ -23,17 +22,14 @@ const config: ScanConfig = {
 const route = process.env.AXE_ROUTE ?? "/profile";
 
 async function main() {
-  const browser = await chromium.launch();
+  const driver = await createWebDriver(config.baseUrl);
   try {
-    const anonymous = await discoverPages(browser, config, "anonymous");
-    const auth = (await authenticate(browser, config, anonymous.pages)).result;
-    const { context, page, network } = await openPage(
-      browser,
-      config,
-      auth?.storageState,
-    );
-    await navigate(page, route);
-    await network.settle();
+    const anonymous = await exploreStates(driver, config, "anonymous");
+    const auth = (await authenticate(driver, config, anonymous.states)).result;
+    const session = await driver.newSession(auth?.storage);
+    await session.open(route);
+    await session.settle();
+    const page = session.web!.page;
 
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
@@ -78,9 +74,9 @@ async function main() {
     console.log(
       `\n=== Elements with color #a3a3a8 ===\n${grey.join("\n") || "(none)"}`,
     );
-    await context.close();
+    await session.close();
   } finally {
-    await browser.close();
+    await driver.close();
   }
 }
 

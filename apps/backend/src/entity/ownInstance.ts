@@ -1,15 +1,9 @@
-import { Page } from "playwright";
 import { Candidate, SessionKind } from "../candidates/types";
 import { ScanConfig } from "../config/scanConfig";
-import { routePattern } from "../crawl/discoverPages";
-import { buildUISemanticGraph } from "../graph/buildGraph";
+import { Session } from "../driver/types";
+import { routePattern } from "../explore/stateKey";
 import { textContent, walk } from "../graph/walk";
-import {
-  fillForm,
-  navigate,
-  submitCandidate,
-} from "../execution/executeCandidate";
-import { NetworkTracker } from "../execution/network";
+import { fillForm, submitCandidate } from "../execution/executeCandidate";
 
 /** A record the tester created itself, so acting on it can never touch existing data. */
 export interface OwnInstance {
@@ -70,16 +64,15 @@ export function rankCreators(
  * Returns the instance, or a reason it couldn't be found.
  */
 export async function createOwnInstance(
-  page: Page,
-  network: NetworkTracker,
+  session: Session,
   config: ScanConfig,
   creator: Candidate,
   pattern: string,
 ): Promise<OwnInstance | { failure: string }> {
-  await navigate(page, creator.route);
-  await network.settle();
-  const marker = await fillForm(page, creator, config);
-  const submitted = await submitCandidate(page, creator);
+  await session.restore(creator.path);
+  await session.settle();
+  const marker = await fillForm(session, creator, config);
+  const submitted = await submitCandidate(session, creator);
   if (!submitted.submitted)
     return {
       failure: `${creator.route} "${creator.formName}": submit stayed disabled`,
@@ -91,15 +84,11 @@ export async function createOwnInstance(
   // loading, and the record looks missing when it is only late. Waiting for
   // the marker text covers both outcomes (a list linking to the record, or
   // the record's own page) and returns as soon as either appears.
-  await page
-    .getByText(marker)
-    .first()
-    .waitFor({ state: "visible", timeout: RECORD_APPEAR_TIMEOUT_MS })
-    .catch(() => {});
-  await network.settle();
+  await session.waitForText(marker, RECORD_APPEAR_TIMEOUT_MS);
+  await session.settle();
 
-  const graph = await buildUISemanticGraph(page);
-  const landedOn = new URL(page.url()).pathname;
+  const graph = await session.observe();
+  const landedOn = session.location();
   const createdBy = `${creator.route} "${creator.formName}"`;
 
   if (
@@ -113,7 +102,7 @@ export async function createOwnInstance(
   walk(graph.root, (node) => {
     if (found || node.type !== "link" || !node.domExtra?.href) return;
     if (!(node.label ?? "").includes(marker)) return;
-    const path = new URL(node.domExtra.href, page.url()).pathname;
+    const path = new URL(node.domExtra.href).pathname;
     if (routePattern(path) === pattern) found = path;
   });
   if (found) return { path: found, marker, createdBy };

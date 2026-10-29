@@ -1,7 +1,10 @@
-import { Browser, Page } from "playwright";
 import { Candidate } from "../candidates/types";
-import { ScanConfig } from "../config/scanConfig";
-import { buildUISemanticGraph } from "../graph/buildGraph";
+import {
+  errorText,
+  RequestRecord,
+  Session,
+  SessionStorage,
+} from "../driver/types";
 import { UISemanticGraphNode } from "../graph/types";
 import { cleanText, walk } from "../graph/walk";
 import {
@@ -9,18 +12,9 @@ import {
   OwnInstance,
   rankCreators,
 } from "../entity/ownInstance";
-import {
-  navigate,
-  openPage,
-  recordDataRequests,
-  RequestRecord,
-  StorageState,
-} from "../execution/executeCandidate";
-import { NetworkTracker } from "../execution/network";
+import { ExecutionContext } from "../execution/executeCandidate";
 import { captureSignature, StateSignature } from "../state/signature";
 import { ClassifiedAction } from "./types";
-
-type AriaRole = Parameters<Page["getByRole"]>[0];
 
 export interface ActionObservation {
   action: ClassifiedAction;
@@ -76,11 +70,10 @@ const SKIP_REASONS: Record<string, string> = {
  * an action clicked on the tester's own record.
  */
 export async function executeAction(
-  browser: Browser,
-  config: ScanConfig,
+  ctx: ExecutionContext,
   action: ClassifiedAction,
   candidates: Candidate[],
-  storageState?: StorageState,
+  storage?: SessionStorage,
 ): Promise<ActionObservation> {
   const observation: ActionObservation = {
     action,
@@ -110,16 +103,8 @@ export async function executeAction(
     return observation;
   }
 
-  const { context, page, network } = await openPage(
-    browser,
-    config,
-    storageState,
-  );
-  page.on("dialog", async (dialog) => {
-    observation.nativeDialogs.push(dialog.message());
-    await dialog.accept().catch(() => {});
-  });
-  const recorder = recordDataRequests(page);
+  const session = await ctx.driver.newSession(storage);
+  const recorder = session.recordRequests();
 
   try {
     // Step 1 — create an own instance on the right page shape.
@@ -130,9 +115,8 @@ export async function executeAction(
       action.control.session,
     )) {
       const result = await createOwnInstance(
-        page,
-        network,
-        config,
+        session,
+        ctx.config,
         creator,
         action.routePattern,
       );
@@ -152,33 +136,28 @@ export async function executeAction(
       return observation;
     }
     // Dialogs shown while creating the instance are not part of the action.
-    observation.nativeDialogs = [];
+    session.takeDialogs();
 
     // Step 2 — act on it.
-    await navigate(page, observation.instance.path);
-    observation.before = await captureSignature(page, network);
+    await session.open(observation.instance.path);
+    observation.before = await captureSignature(session);
 
     recorder.start();
-    const control = page
-      .getByRole(action.control.role as AriaRole, {
-        name: action.control.label,
-        exact: true,
-      })
-      .first();
-    await control.click();
+    await session.click(action.control);
     observation.executed = true;
-    await network.settle();
+    await session.settle();
 
-    await answerConfirmation(page, network, observation);
+    observation.nativeDialogs.push(...session.takeDialogs());
+    await answerConfirmation(session, observation);
 
-    observation.after = await captureSignature(page, network);
+    observation.after = await captureSignature(session);
     observation.requests = recorder.stop();
 
     // Step 3 — for deletions, open the record's page again to see whether it is really gone.
     if (action.contract.category === "destructive") {
       recorder.start();
-      await navigate(page, observation.instance.path);
-      const signature = await captureSignature(page, network);
+      await session.open(observation.instance.path);
+      const signature = await captureSignature(session);
       observation.revisit = {
         signature,
         markerPresent: signatureContains(
@@ -189,12 +168,12 @@ export async function executeAction(
       };
     }
   } catch (err) {
-    observation.error =
-      err instanceof Error ? err.message.split("\n")[0] : String(err);
+    observation.error = errorText(err);
     if (observation.requests.length === 0)
       observation.requests = recorder.stop();
   } finally {
-    await context.close();
+    observation.nativeDialogs.push(...session.takeDialogs());
+    await session.close();
   }
 
   return observation;
@@ -210,13 +189,11 @@ export async function executeAction(
  * verb ("Delete" for "Delete task") or reads as a generic yes.
  */
 async function answerConfirmation(
-  page: Page,
-  network: NetworkTracker,
+  session: Session,
   observation: ActionObservation,
 ): Promise<void> {
   const result = await confirmIfAsked(
-    page,
-    network,
+    session,
     observation.action.control.label,
     observation.before?.dialogs ?? [],
     observation.nativeDialogs,
@@ -230,8 +207,7 @@ async function answerConfirmation(
  * steps (cleaning up own records) answer confirmations the same way.
  */
 export async function confirmIfAsked(
-  page: Page,
-  network: NetworkTracker,
+  session: Session,
   controlLabel: string,
   dialogsBeforeClick: string[],
   nativeDialogs: string[],
@@ -243,7 +219,7 @@ export async function confirmIfAsked(
     };
   }
 
-  const graph = await buildUISemanticGraph(page);
+  const graph = await session.observe();
   const dialogsBefore = new Set(dialogsBeforeClick);
   const newDialogs: UISemanticGraphNode[] = [];
   walk(graph.root, (node) => {
@@ -274,11 +250,8 @@ export async function confirmIfAsked(
       shown: true,
       answer: "a dialog appeared, but no confirming button could be identified",
     };
-  await page
-    .getByRole("button", { name: confirmLabel, exact: true })
-    .last()
-    .click();
-  await network.settle();
+  await session.click({ role: "button", label: confirmLabel }, { last: true });
+  await session.settle();
   return {
     shown: true,
     answer: `clicked "${cleanText(confirmLabel)}" in the dialog`,

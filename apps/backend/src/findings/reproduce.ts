@@ -1,22 +1,20 @@
-import { Browser } from "playwright";
 import { Candidate } from "../candidates/types";
-import { ScanConfig } from "../config/scanConfig";
+import { SessionStorage } from "../driver/types";
 import { checkActionContracts } from "../contracts/actionContracts";
 import { checkContracts } from "../contracts/checkContracts";
 import { ContractResult } from "../contracts/types";
 import { ActionObservation, executeAction } from "../discovery/executeAction";
 import {
+  ExecutionContext,
   executeCandidate,
   Observation,
-  StorageState,
 } from "../execution/executeCandidate";
 import { Finding } from "./types";
 
-export interface RunContext {
-  browser: Browser;
-  config: ScanConfig;
+export interface RunContext extends ExecutionContext {
   candidates: Candidate[];
-  storageState?: StorageState;
+  /** The logged-in session, for authenticated subjects. */
+  storage?: SessionStorage;
 }
 
 export interface Reproduction {
@@ -40,24 +38,16 @@ export async function reproduce(
 
   if (subject.kind === "form") {
     const storage =
-      subject.candidate.session === "authenticated"
-        ? ctx.storageState
-        : undefined;
-    formObservation = await executeCandidate(
-      ctx.browser,
-      ctx.config,
-      subject.candidate,
-      storage,
-    );
+      subject.candidate.session === "authenticated" ? ctx.storage : undefined;
+    formObservation = await executeCandidate(ctx, subject.candidate, storage);
     results = checkContracts(formObservation);
   } else {
     const storage =
       subject.action.control.session === "authenticated"
-        ? ctx.storageState
+        ? ctx.storage
         : undefined;
     actionObservation = await executeAction(
-      ctx.browser,
-      ctx.config,
+      ctx,
       subject.action,
       ctx.candidates,
       storage,

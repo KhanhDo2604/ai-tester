@@ -1,8 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
-import { Page } from "playwright";
-import { DiscoveredPage } from "../crawl/discoverPages";
-import { navigate, openPage } from "../execution/executeCandidate";
-import { NetworkTracker } from "../execution/network";
+import { locationOf, Session } from "../driver/types";
+import { DiscoveredState } from "../explore/exploreStates";
 import { RunContext } from "../findings/reproduce";
 import { Finding, toPattern } from "../findings/types";
 
@@ -54,13 +52,13 @@ function splitByCause(
   return out;
 }
 
-async function audit(
-  page: Page,
-  network: NetworkTracker,
-): Promise<AxeViolation[]> {
-  await network.settle();
-  return (await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze())
-    .violations;
+async function audit(session: Session): Promise<AxeViolation[]> {
+  await session.settle();
+  return (
+    await new AxeBuilder({ page: session.web!.page })
+      .withTags(WCAG_TAGS)
+      .analyze()
+  ).violations;
 }
 
 function successCriteria(tags: string[]): string[] {
@@ -85,45 +83,53 @@ function describeNodes(
 }
 
 /**
- * Runs axe-core on every crawled page shape, twice (load, then reload).
- * One finding per rule and cause for the whole app, since a rule failing on
- * many pages is usually one shared cause (a layout, a component).
+ * Runs axe-core on every explored state, twice (reached, then reached
+ * again from scratch). One finding per rule and cause for the whole app,
+ * since a rule failing on many screens is usually one shared cause.
+ *
+ * Web only: axe-core reads the DOM. Other platforms get their own audit.
  */
 export async function auditAccessibility(
   ctx: RunContext,
-  pages: DiscoveredPage[],
-): Promise<Finding[]> {
+  states: DiscoveredState[],
+): Promise<{ findings: Finding[]; notes: string[] }> {
+  if (ctx.driver.platform !== "web")
+    return {
+      findings: [],
+      notes: [
+        `accessibility audit: not available on ${ctx.driver.platform} yet`,
+      ],
+    };
   const rules = new Map<string, RuleHits>();
 
-  for (const discovered of pages) {
+  for (const discovered of states) {
     const storage =
-      discovered.session === "authenticated" ? ctx.storageState : undefined;
-    const { context, page, network } = await openPage(
-      ctx.browser,
-      ctx.config,
-      storage,
-    );
+      discovered.session === "authenticated" ? ctx.storage : undefined;
+    const session = await ctx.driver.newSession(storage);
     try {
-      await navigate(page, discovered.graph.route);
-      const first = splitByCause(await audit(page, network));
+      await session.restore(discovered.path);
+      const first = splitByCause(await audit(session));
       if (first.size === 0) continue;
-      await page.reload({ waitUntil: "domcontentloaded" });
-      const second = splitByCause(await audit(page, network));
+      // A fresh restore rather than a reload, so screens kept in memory are audited again too.
+      await session.restore(discovered.path);
+      const second = splitByCause(await audit(session));
 
-      const pattern = toPattern(discovered.graph.route);
+      const pattern = discovered.path.steps.length
+        ? locationOf(discovered.path)
+        : toPattern(discovered.graph.route);
       for (const [key, { violation, cause }] of first) {
         const hits = rules.get(key) ?? { violation, cause, pages: [] };
         hits.pages.push({ pattern, violation, reproduced: second.has(key) });
         rules.set(key, hits);
       }
     } catch {
-      // A page that fails to load here was already reported by the crawl.
+      // A state that can't be reached here was already reported by exploration.
     } finally {
-      await context.close();
+      await session.close();
     }
   }
 
-  return [...rules.entries()].map(([key, hits]) => {
+  const findings = [...rules.entries()].map(([key, hits]) => {
     const v = hits.violation;
     const help = hits.cause ? `${v.help}: ${hits.cause}` : v.help;
     const criteria = successCriteria(v.tags);
@@ -160,8 +166,8 @@ export async function auditAccessibility(
           : []),
         `reference: ${v.helpUrl}`,
         reproducedOn.length
-          ? `present again after reloading ${reproducedOn.join(", ")}`
-          : "not present after reloading",
+          ? `present again after reopening ${reproducedOn.join(", ")}`
+          : "not present after reopening",
       ],
       results: [],
       reproduced: reproducedOn.length > 0,
@@ -170,4 +176,5 @@ export async function auditAccessibility(
         : undefined,
     } satisfies Finding;
   });
+  return { findings, notes: [] };
 }
